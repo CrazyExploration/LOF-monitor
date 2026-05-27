@@ -3,7 +3,10 @@ import pandas as pd
 import requests
 import re
 
-# 1. 定义你要监控的海外 LOF 资产清单
+# 1. 你的 PushDeer PUSH_KEY
+PUSH_KEY = "PDU41670T22D55V5R9teoDdNT1StkmMppq8351Evg"
+
+# 2. 定义你要监控的海外 LOF 资产清单
 FUND_MAP = {
     # --- 美股系列 ---
     "161130": ["纳指LOF", "sz", "NQ=F"],
@@ -22,6 +25,27 @@ FUND_MAP = {
     "513030": ["德国DAXLOF", "sh", "^GDAXI"],     
     "513880": ["日经ETF/LOF", "sh", "NK=F"]      
 }
+
+def send_notification(msg):
+    """
+    使用 PushDeer 发送实时推送
+    """
+    print(f"[开始发送 PushDeer 推送]...\n{msg}")
+    url = "https://api2.pushdeer.com/message/push"
+    payload = {
+        "pushkey": PUSH_KEY,
+        "text": "🔥 LOF套利雷达发现机会",
+        "desp": msg,
+        "type": "markdown" # 支持 Markdown 格式排版
+    }
+    try:
+        res = requests.post(url, data=payload, timeout=10).json()
+        if res.get("content", {}).get("result") == "ok":
+            print("🚀 PushDeer 推送成功！")
+        else:
+            print(f"❌ PushDeer 返回错误: {res}")
+    except Exception as e:
+        print(f"❌ 推送失败，网络异常: {e}")
 
 def get_all_iopv():
     print("====== 开始获取海外市场实时动态 ======")
@@ -44,7 +68,7 @@ def get_all_iopv():
 
     headers = {
         "Referer": "https://fund.eastmoney.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
     results = []
@@ -72,30 +96,24 @@ def get_all_iopv():
         except:
             pass
 
-        # C. 【全新修复】解析天天基金网页版公开接口获取申购状态与限额
+        # C. 解析天天基金网页版公开接口获取申购状态与限额
         status_str = "✅ 自由申购"
         try:
-            # 这个本地化 JS 接口专门提供给前端渲染，防爬墙策略极度宽松，海外 IP 100% 可用
             web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
             web_res = requests.get(web_info_url, headers=headers, timeout=5).text
             
-            # 1. 检查是否暂停申购
-            # 网页接口中如果含有 "暂停申购" 或者相关字眼
             if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
                 status_str = "❌ 暂停申购"
             else:
-                # 2. 检查是否有大额限额
-                # 正则匹配形如 "买入限额 100元" 或 "单日限额500"
                 limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
                 if not limit_match:
-                    # 备用匹配方案：直接从网页的备注字段提取数字
                     limit_match = re.search(r'"PurLmtAmt"\s*:\s*"([^"]+)"', web_res)
                 
                 if limit_match:
                     limit_val = limit_match.group(1)
                     if limit_val and limit_val != "0" and limit_val != "无限制":
                         status_str = f"⚠️ 限购 {limit_val}"
-        except Exception as e:
+        except:
             status_str = "⚠️ 解析失败"
 
         # D. 计算实时 IOPV
@@ -125,14 +143,17 @@ def get_all_iopv():
     print(df[["代码", "名称", "现价", "估算IOPV", "实时溢价率", "申购状态"]].to_string(index=False))
     print("========================================================\n")
 
-    # 5. 过滤出：【有套利价值】且【没有暂停申购】的基金进行通知
+    # 5. 过滤出：【有套利价值 > 3%】且【没有暂停申购】的基金进行通知
     alert_funds = df[(df['raw_premium'] > 0.03) & (df['申购状态'] != "❌ 暂停申购")]
     if not alert_funds.empty:
-        msg_list = [f"{row['名称']}({row['代码']}): 溢价 {row['实时溢价率']} ({row['申购状态']})" for _, row in alert_funds.iterrows()]
-        send_notification("发现可套利高溢价LOF！\n" + "\n".join(msg_list))
-
-def send_notification(msg):
-    print(f"[发送通知]:\n{msg}")
+        msg_markdown = "### 🚨 发现可套利高溢价LOF！\n"
+        for _, row in alert_funds.iterrows():
+            msg_markdown += f"- **{row['名称']} ({row['代码']})**\n"
+            msg_markdown += f"  - 实时溢价率：`{row['实时溢价率']}`\n"
+            msg_markdown += f"  - 现价/估算IOPV：{row['现价']} / {row['估算IOPV']}\n"
+            msg_markdown += f"  - 状态：{row['申购状态']}\n\n"
+        
+        send_notification(msg_markdown)
 
 if __name__ == "__main__":
     get_all_iopv()
