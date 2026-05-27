@@ -1,6 +1,9 @@
 name: LOF Arbitrage Daily Check
 
 on:
+# 加上这行，网页端就会多出一个“手动运行”的按钮
+  workflow_dispatch:
+  
   schedule:
     # 转换成国际标准时间 (UTC)。北京时间 = UTC + 8 
     # 13:00 -> 05:00 UTC
