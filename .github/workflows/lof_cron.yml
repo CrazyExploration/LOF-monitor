@@ -1,17 +1,12 @@
 name: LOF Arbitrage Daily Check
 
 on:
-# 加上这行，网页端就会多出一个“手动运行”的按钮
-  workflow_dispatch:
-  
+  workflow_dispatch: # 保持手动触发按钮
+
   schedule:
-    # 转换成国际标准时间 (UTC)。北京时间 = UTC + 8 
-    # 13:00 -> 05:00 UTC
-    # 14:00 -> 06:00 UTC
-    # 14:45 -> 06:45 UTC
-    # 我们设置在周一至周五的 13:00, 14:00, 14:30, 14:45 触发
-    - cron: '0 5,6 * * 1-5'    # 13:00 和 14:00
-    - cron: '30,45 6 * * 1-5'  # 14:30 和 14:45
+    # 国际标准时间 (UTC) = 北京时间 - 8小时
+    # 周一至周五运行 (1-5)
+    - cron: '10 6 * * 1-5'  # 北京时间 14:10 (即便延迟10分钟，也能在14:20收到)
 
 jobs:
   monitor:
@@ -27,7 +22,7 @@ jobs:
 
     - name: Install Libraries
       run: |
-        pip install akshare yfinance pandas requests
+        pip install yfinance pandas requests
 
     - name: Run Monitor Script
       run: python monitor.py
