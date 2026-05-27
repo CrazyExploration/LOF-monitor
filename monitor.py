@@ -3,79 +3,117 @@ import pandas as pd
 import requests
 import re
 
-def get_realtime_iopv():
-    # 1. 获取美股期货和汇率的日内涨跌幅 (Yahoo Finance) - 这步你已经成功了
-    tickers = yf.Tickers('NQ=F CNY=X')
-    nq_change = tickers.tickers['NQ=F'].info.get('regularMarketChangePercent', 0) / 100
-    cny_change = tickers.tickers['CNY=X'].info.get('regularMarketChangePercent', 0) / 100
+# 1. 定义你要监控的海外 LOF 资产清单（覆盖集思录核心品种）
+# 格式: A股代码: [中文简称, 新浪接口前缀, 对应的海外参考期货/指数]
+FUND_MAP = {
+    # --- 美股系列 ---
+    "161130": ["纳指LOF", "sz", "NQ=F"],
+    "512100": ["纳斯达克LOF", "sh", "NQ=F"],
+    "161125": ["标普500LOF", "sz", "ES=F"],
+    "164701": ["黄金LOF", "sz", "GC=F"],       # 纽约黄金期货
+    "162411": ["华宝油气LOF", "sz", "CL=F"],     # WTI原油期货
     
-    print(f"美股纳指期货今日变动: {nq_change:.2%}")
-    print(f"美元/人民币汇率今日变动: {cny_change:.2%}")
+    # --- 港股/中概系列 (A股盘中恒指期货在交易) ---
+    "164906": ["中国互联LOF", "sz", "HSI=F"],    # 恒生指数期货修正
+    "501005": ["中概互联网LOF", "sh", "HSI=F"],
+    "161726": ["恒生LOF", "sz", "HSI=F"],
+    
+    # --- 其他海外系列 ---
+    "164824": ["印度基金LOF", "sz", "^BSESN"],    # 印度SENSEX指数
+    "513030": ["德国DAXLOF", "sh", "^GDAXI"],     # 德国DAX指数
+    "513880": ["日经ETF/LOF", "sh", "NK=F"]      # 日经225期货
+}
 
-    # 2. 【修复核心】改用新浪财经公开接口获取 A 股场内 LOF 实时价格（海外IP极度友好）
-    fund_code = '161130'
-    # 深圳基金前缀是 sz, 上海是 sh。纳指LOF 161130 是深交所上市
-    sina_url = f"https://hq.sinajs.cn/list=sz{fund_code}"
+def get_all_iopv():
+    print("====== 开始获取海外市场实时动态 ======")
+    # 统一提取所有需要用到的海外期货和指数代码
+    global_tickers = list(set([info[2] for info in FUND_MAP.values()]))
+    # 加上美元兑人民币汇率
+    global_tickers.append("CNY=X")
     
-    # 新浪接口需要加一个随便的 Referer 请求头防简单的拦截
+    try:
+        tickers_data = yf.Tickers(' '.join(global_tickers))
+        # 构建一个涨跌幅字典
+        market_changes = {}
+        for ticker in global_tickers:
+            change = tickers_data.tickers[ticker].info.get('regularMarketChangePercent', 0) / 100
+            market_changes[ticker] = change
+            print(f"海外资产 {ticker} 今日日内变动: {change:.2%}")
+    except Exception as e:
+        print(f"获取海外市场数据失败: {e}，将使用0误差替代")
+        market_changes = {ticker: 0.0 for ticker in global_tickers}
+
+    cny_change = market_changes.get("CNY=X", 0)
+    print("======================================\n")
+
     headers = {
         "Referer": "https://finance.sina.com.cn",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    
-    try:
-        response = requests.get(sina_url, headers=headers, timeout=10)
-        # 新浪返回的格式类似于: var hq_str_sz161130="纳指LOF,1.523,1.524,1.530,...";
-        # 我们用正则表达式或者切片把价格拿出来
-        text = response.text
-        data_match = re.search(r'"([^"]*)"', text)
-        if not data_match:
-            print("未能解析到新浪行情数据")
-            return
-            
-        data_list = data_match.group(1).split(',')
-        if len(data_list) < 4:
-            print("新浪返回数据格式不正确")
-            return
-            
-        # data_list[3] 是当前最新价
-        current_price = float(data_list[3])
-        if current_price == 0:
-            # 如果还没开盘或者停牌，取昨收盘价 data_list[2]
-            current_price = float(data_list[2])
-            
-    except Exception as e:
-        print(f"获取场内实时价格失败: {e}")
-        return
+
+    results = []
+
+    # 2. 循环计算每一个 LOF 的实时溢价
+    for fund_code, info in FUND_MAP.items():
+        fund_name, prefix, ticker_code = info
         
-    print(f"场内现价 (161130): {current_price}")
+        # 获取 A 股场内现价
+        sina_url = f"https://hq.sinajs.cn/list={prefix}{fund_code}"
+        try:
+            res = requests.get(sina_url, headers=headers, timeout=5)
+            data_match = re.search(r'"([^"]*)"', res.text)
+            if not data_match: continue
+            data_list = data_match.group(1).split(',')
+            current_price = float(data_list[3]) if float(data_list[3]) > 0 else float(data_list[2])
+        except:
+            continue
 
-    # 3. 获取该基金 T-1 日的官方净值
-    # 新浪接口的 data_list[1] 其实就是前一天的净值/昨收，但为了绝对精准，我们也可以用天天基金的轻量接口
-    try:
-        tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
-        tt_res = requests.get(tt_url, headers=headers, timeout=10)
-        # 返回格式: jsonpgz({"fundcode":"161130","name":"...","dwjz":"1.4230","jzrq":"2026-05-26" ...});
-        last_nav = float(re.search(r'"dwjz":"([^"]*)"', tt_res.text).group(1))
-        nav_date = re.search(r'"jzrq":"([^"]*)"', tt_res.text).group(1)
-        print(f"基金最新官方净值 ({nav_date}): {last_nav}")
-    except Exception as e:
-        print(f"获取官方净值失败，尝试使用新浪替代值")
-        last_nav = float(data_list[1]) # 降级使用昨收
+        # 获取 T-1 日官方净值
+        try:
+            tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
+            tt_res = requests.get(tt_url, headers=headers, timeout=5)
+            last_nav = float(re.search(r'"dwjz":"([^"]*)"', tt_res.text).group(1))
+        except:
+            last_nav = float(data_list[1]) # 天天基金不通时降级使用昨收
 
-    # 4. 计算估算 IOPV 和 溢价率
-    estimated_iopv = last_nav * (1 + nq_change) * (1 + cny_change)
-    premium_rate = (current_price / estimated_iopv) - 1
+        # 3. 计算实时 IOPV
+        # 实时估算IOPV = 昨末净值 * (1 + 对应标的期货涨幅) * (1 + 汇率涨幅)
+        asset_change = market_changes.get(ticker_code, 0)
+        
+        # 特殊处理：如果是港股中概，汇率对冲逻辑不同，简化处理
+        if ticker_code == "HSI=F":
+            estimated_iopv = last_nav * (1 + asset_change) # 港币挂钩美元，日内波动主要看恒指
+        else:
+            estimated_iopv = last_nav * (1 + asset_change) * (1 + cny_change)
+            
+        premium_rate = (current_price / estimated_iopv) - 1
 
-    print(f"盘中估算IOPV: {estimated_iopv:.4f}")
-    print(f"🔥 实时估算溢价率: {premium_rate:.2%}")
+        results.append({
+            "代码": fund_code,
+            "名称": fund_name,
+            "现价": current_price,
+            "估算IOPV": round(estimated_iopv, 4),
+            "实时溢价率": f"{premium_rate:.2%}",
+            "raw_premium": premium_rate
+        })
+
+    # 4. 输出大盘看板
+    df = pd.DataFrame(results)
+    df = df.sort_values(by="raw_premium", ascending=False) # 按溢价率从高到低排序
     
-    # 5. 触发阈值通知
-    if premium_rate > 0.05: 
-        send_notification(f"纳指LOF溢价达 {premium_rate:.2%}，速去场外申购！")
+    print("🔥 ====== 全网海外 LOF 溢价率实时监控看板 ======")
+    print(df[["代码", "名称", "现价", "估算IOPV", "实时溢价率"]].to_string(index=False))
+    print("================================================\n")
+
+    # 5. 筛选高溢价进行通知（比如溢价率 > 3% 触发通知）
+    alert_funds = df[df['raw_premium'] > 0.03]
+    if not alert_funds.empty:
+        msg_list = [f"{row['名称']}({row['代码']}): 溢价率 {row['实时溢价率']}" for _, row in alert_funds.iterrows()]
+        send_notification("发现高溢价LOF！\n" + "\n".join(msg_list))
 
 def send_notification(msg):
-    print(f"[发送通知]: {msg}")
+    print(f"[微信/钉钉推送]:\n{msg}")
+    # TODO: 绑定你的推送 Token，例如使用 Server酱 或企业微信 Webhook
 
 if __name__ == "__main__":
-    get_realtime_iopv()
+    get_all_iopv()
