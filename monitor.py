@@ -6,8 +6,7 @@ import re
 # 1. 你的 PushDeer PUSH_KEY
 PUSH_KEY = "PDU41670T22D55V5R9teoDdNT1StkmMppq8351Evg"
 
-# 2. 全量跨境 ETF / LOF 资产映射表 (按你提供的清单精细化分类)
-# 格式: A股代码: [中文简称, 新浪前缀, 对应的海外实时参考资产代码]
+# 2. 全量跨境 ETF / LOF 资产映射表
 FUND_MAP = {
     # --- 美股宽基 & 科技系列 ---
     "159941": ["纳指ETF", "sz", "NQ=F"],
@@ -34,21 +33,21 @@ FUND_MAP = {
     "159577": ["美国50ETF", "sz", "ES=F"],
 
     # --- 美股行业细分 (信息科技/生物/消费/油气) ---
-    "161128": ["标普信息科技LOF", "sz", "XLK"],       # 标普科技行业ETF
-    "159502": ["标普生物科技ETF", "sz", "XBI"],       # 标普生物科技
+    "161128": ["标普信息科技LOF", "sz", "XLK"],       
+    "159502": ["标普生物科技ETF", "sz", "XBI"],       
     "161127": ["标普生物科技LOF", "sz", "XBI"],
-    "513290": ["纳指生物科技ETF", "sh", "^IBB"],      # 纳指生物科技指数
-    "159529": ["标普消费ETF", "sz", "XLY"],           # 标普可选消费
+    "513290": ["纳指生物科技ETF", "sh", "^IBB"],      
+    "159529": ["标普消费ETF", "sz", "XLY"],           
     "162415": ["美国消费LOF", "sz", "XLY"],
-    "513350": ["标普油气ETF", "sh", "XOP"],           # 标普油气上游ETF
+    "513350": ["标普油气ETF", "sh", "XOP"],           
     "159518": ["标普油气ETF", "sz", "XOP"],
     "162411": ["华宝油气LOF", "sz", "XOP"],
-    "162719": ["石油LOF", "sz", "XLE"],               # 标普能源行业ETF
-    "160416": ["石油基金LOF", "sz", "IXC"],           # 全球石油指数ETF
+    "162719": ["石油LOF", "sz", "XLE"],               
+    "160416": ["石油基金LOF", "sz", "IXC"],           
     "163208": ["全球油气能源LOF", "sz", "XLE"],
 
     # --- 港股 & 中概互联网系列 ---
-    "160644": ["港美互联网LOF", "sz", "KWEB"],        # 金瑞基金中概互联网ETF (美股映射)
+    "160644": ["港美互联网LOF", "sz", "KWEB"],        
     "513050": ["中概互联网ETF", "sh", "KWEB"],
     "159605": ["中概互联ETF", "sz", "KWEB"],
     "159607": ["中概互联网ETF", "sz", "KWEB"],
@@ -60,46 +59,65 @@ FUND_MAP = {
     "513360": ["教育ETF", "sh", "KWEB"],
 
     # --- 全球其他主要市场系列 (欧洲/亚太/新兴市场) ---
-    "159561": ["德国ETF", "sz", "^GDAXI"],            # 德国DAX
+    "159561": ["德国ETF", "sz", "^GDAXI"],            
     "513030": ["德国ETF", "sh", "^GDAXI"],
-    "513080": ["法国CAC40ETF", "sh", "^FCHI"],        # 法国CAC40
-    "164824": ["印度基金LOF", "sz", "^BSESN"],         # 印度SENSEX
-    "513870": ["日经ETF/LOF", "sh", "NK=F"],          # 日经225期货
-    "520830": ["沙特ETF", "sh", "KSA"],               # iShares沙特ETF (美股映射)
+    "513080": ["法国CAC40ETF", "sh", "^FCHI"],        
+    "164824": ["印度基金LOF", "sz", "^BSESN"],         
+    "513870": ["日经ETF/LOF", "sh", "NK=F"],          
+    "520830": ["沙特ETF", "sh", "KSA"],               
     "159329": ["沙特ETF", "sz", "KSA"],
-    "520870": ["巴西ETF", "sh", "EWZ"],               # iShares巴西ETF
+    "520870": ["巴西ETF", "sh", "EWZ"],               
     "159100": ["巴西ETF", "sz", "EWZ"],
-    "513730": ["东南亚科技ETF", "sh", "ASEA"],        # 全球东南亚ETF
-    "159687": ["亚太精选ETF", "sz", "AAXJ"],          # 标普亚太除日本
+    "513730": ["东南亚科技ETF", "sh", "ASEA"],        
+    "159687": ["亚太精选ETF", "sz", "AAXJ"],          
     "520580": ["新兴亚洲ETF", "sh", "AAXJ"],
     "501312": ["海外科技LOF", "sz", "XLK"],
-    "501225": ["全球芯片LOF", "sz", "SOXX"],          # 费城半导体芯片ETF
+    "501225": ["全球芯片LOF", "sz", "SOXX"],          
 
     # --- 大宗商品、REITs、债券系列 ---
-    "164701": ["黄金LOF", "sz", "GC=F"],              # 伦敦金期货
+    "164701": ["黄金LOF", "sz", "GC=F"],              
     "161116": ["黄金主题LOF", "sz", "GC=F"],
     "160719": ["嘉实黄金LOF", "sz", "GC=F"],
-    "501018": ["南方原油LOF", "sh", "CL=F"],           # WTI原油期货
+    "501018": ["南方原油LOF", "sh", "CL=F"],           
     "160723": ["嘉实原油LOF", "sz", "CL=F"],
     "161129": ["原油LOF易方达", "sz", "CL=F"],
-    "160216": ["国泰商品LOF", "sz", "DBC"],           # 大宗商品指数ETF
+    "160216": ["国泰商品LOF", "sz", "DBC"],           
     "165513": ["中信保诚商品LOF", "sz", "DBC"],
     "161815": ["抗通胀LOF", "sz", "DBC"],
-    "160140": ["美国REIT精选LOF", "sz", "IYR"],       # 美国房地产指数ETF
-    "501300": ["美元债LOF", "sh", "AGG"]              # 美国综合债券ETF
+    "160140": ["美国REIT精选LOF", "sz", "IYR"],       
+    "501300": ["美元债LOF", "sh", "AGG"]              
 }
+
+def send_notification(msg):
+    """
+    负责把报警信息打通到你的 PushDeer
+    """
+    print(f"[开始发送 PushDeer 推送]...\n{msg}")
+    url = "https://api2.pushdeer.com/message/push"
+    payload = {
+        "pushkey": PUSH_KEY,
+        "text": "🚨 LOF套利雷达发现黄金机会！",
+        "desp": msg,
+        "type": "markdown"
+    }
+    try:
+        res = requests.post(url, data=payload, timeout=10).json()
+        if res.get("content", {}).get("result") == "ok":
+            print("🚀 PushDeer 推送成功！")
+        else:
+            print(f"❌ PushDeer 返回错误: {res}")
+    except Exception as e:
+        print(f"❌ 推送失败，网络异常: {e}")
 
 def get_all_iopv():
     print("====== 开始获取海外市场实时动态 ======")
-    # 动态抓取去重后的所有海外代码
     global_tickers = list(set([info[2] for info in FUND_MAP.values()]))
-    global_tickers.append("CNY=X") # 汇率
+    global_tickers.append("CNY=X") 
     
     try:
         tickers_data = yf.Tickers(' '.join(global_tickers))
         market_changes = {}
         for ticker in global_tickers:
-            # yfinance 提取日内变动百分比
             change = tickers_data.tickers[ticker].info.get('regularMarketChangePercent', 0) / 100
             market_changes[ticker] = change
             print(f"海外资产 {ticker} 今日日内变动: {change:.2%}")
@@ -163,7 +181,6 @@ def get_all_iopv():
         # D. 计算实时 IOPV
         asset_change = market_changes.get(ticker_code, 0)
         
-        # 特殊处理港股和美股挂钩资产（美股映射资产本身已含汇率计价变动，无需重复计算汇率）
         if ticker_code in ["^HSI", "KWEB", "KSA", "EWZ", "ASEA", "AAXJ", "XLK", "XBI", "XOP", "XLE", "IXC", "SOXX", "IYR", "AGG", "DBC"]:
             estimated_iopv = last_nav * (1 + asset_change) 
         else:
@@ -186,7 +203,7 @@ def get_all_iopv():
     df = df.sort_values(by="raw_premium", ascending=False) 
     
     print("🔥 ====== 全网海外 LOF/ETF 溢价率 + 申购状态监控看板 ======")
-    pd.set_option('display.max_rows', None) # 确保打印全部基金
+    pd.set_option('display.max_rows', None) 
     print(df[["代码", "名称", "现价", "估算IOPV", "实时溢价率", "申购状态"]].to_string(index=False))
     print("========================================================\n")
 
