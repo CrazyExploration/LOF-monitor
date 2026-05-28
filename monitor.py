@@ -2,9 +2,10 @@ import yfinance as yf
 import pandas as pd
 import requests
 import re
+import os
 
-# 1. 你的 PushDeer PUSH_KEY
-os.getenv("PUSH_KEY")
+# 1. 从环境变量读取 PushDeer PUSH_KEY
+PUSH_KEY = os.getenv("PUSH_KEY")
 
 # 2. 全量跨境 ETF / LOF 资产映射表
 FUND_MAP = {
@@ -120,8 +121,8 @@ def get_all_iopv():
             pc_url = f"https://fund.eastmoney.com/{fund_code}.html"
             html_content = requests.get(pc_url, headers=headers_pc, timeout=6).content.decode('utf-8')
             
-            # 策略：抓取天天基金页面中独有的“申购状态”标签结构
-            # 官网停购时，页面 HTML 通常会包含：“<td>暂停申购</td>” 或者在限购栏写明额度
+            # 策略：抓取天天基金页面中独有的"申购状态"标签结构
+            # 官网停购时，页面 HTML 通常会包含："<td>暂停申购</td>" 或者在限购栏写明额度
             if "暂停申购" in html_content:
                 status_str = "❌ 暂停申购"
             else:
