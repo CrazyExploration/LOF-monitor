@@ -115,26 +115,39 @@ def get_all_iopv():
         except:
             pass
 
-        # C. 解析天天基金网页版公开接口获取申购状态与限额
+        # C. 【升级版】双重接口解析获取申购状态与限额
         status_str = "✅ 自由申购"
         try:
+            # 接口 1：天天基金基础静态接口
             web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
             web_res = requests.get(web_info_url, headers=headers, timeout=5).text
             
-            if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
+            # 接口 2：天天基金动态详情接口（此接口对变动极度敏感）
+            detail_url = f"https://fundmobapi.1234567.com.cn/FundMApi/FundBaseLoading.ashx?FCODE={fund_code}&deviceid=Wap&version=6.5.5"
+            detail_res = requests.get(detail_url, headers=headers, timeout=5).json()
+            
+            # 提取接口 2 的真实申购状态
+            # 0-可以申购，1-停购，2-限购
+            buy_state = detail_res.get("Datas", {}).get("GZ", {}).get("BUYSTATE")
+            state_desc = detail_res.get("Datas", {}).get("GZ", {}).get("STATE_DESC", "")
+            
+            if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", "") or buy_state == "1" or "暂停" in state_desc:
                 status_str = "❌ 暂停申购"
             else:
-                limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
-                if not limit_match:
-                    limit_match = re.search(r'"PurLmtAmt"\s*:\s*"([^"]+)"', web_res)
-                
-                if limit_match:
-                    limit_val = limit_match.group(1)
-                    if limit_val and limit_val != "0" and limit_val != "无限制":
-                        status_str = f"⚠️ 限购 {limit_val}"
-        except:
+                # 优先从对敏感的动态接口提取大额限购额度
+                if buy_state == "2":
+                    status_str = f"⚠️ 限购 (看公告)"
+                    limit_match = re.search(r'(\d+元|\d+万|\d+单)', state_desc)
+                    if limit_match:
+                        status_str = f"⚠️ 限购 {limit_match.group(1)}"
+                else:
+                    # 备用：从静态接口匹配
+                    limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
+                    if limit_match:
+                        status_str = f"⚠️ 限购 {limit_match.group(1)}"
+        except Exception as e:
             status_str = "⚠️ 解析失败"
-
+            
         # D. 计算实时 IOPV
         asset_change = market_changes.get(ticker_code, 0)
         
