@@ -26,4 +26,6 @@ jobs:
         pip install yfinance pandas requests
 
     - name: Run Monitor Script
+      env:
+        PUSH_KEY: ${{ secrets.PUSH_KEY }}  # ← 添加这行
       run: python monitor.py
