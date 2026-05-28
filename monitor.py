@@ -9,94 +9,90 @@ import os
 # 1. 从环境变量读取 PushDeer PUSH_KEY
 PUSH_KEY = os.getenv("PUSH_KEY")
 
-def get_top_50_all_lof():
+def get_top_50_dynamic_lof():
     """
-    直接攻陷东方财富行情中心LOF板块底层接口，动态获取今日成交额最大的50只LOF
-    对应网页: https://quote.eastmoney.com/center/gridlist.html#fund_lof
+    通过雪球网大盘接口，每天彻底动态获取全市场成交额最大的50只场内基金/LOF
     """
-    print("🔄 正在从东方财富行情中心动态获取成交额 Top 50 的场内 LOF...")
+    print("🔄 正在通过雪球网底层动态获取今日全市场成交额 Top 50 的场内基金...")
     
-    # 东财行情中心LOF板块的官方底层API接口
-    # f6: 成交额, f12: 基金代码, f14: 基金名称, f2: 最新价, f3: 涨跌幅
-    url = (
-        "https://push2.eastmoney.com/api/qt/clist/get"
-        "?pn=1&pz=80&po=1&np=1&fltt=2&inv=1&fid=f6&fs=m:1+t:3,m:0+t:25"
-        "&fields=f2,f3,f6,f12,f14"
-    )
-    
-    headers = {
-        "Referer": "https://quote.eastmoney.com/",
+    # 模拟浏览器访问，先获取雪球初始Cookie（这是绕过海外IP反爬的核心战术）
+    session = requests.Session()
+    base_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    try:
+        session.get("https://xueqiu.com", headers=base_headers, timeout=5)
+    except Exception as e:
+        print(f"⚠️ 初始化雪球Session失败: {e}，尝试直接请求...")
+
+    # 雪球全量场内基金动态接口：_size=100(取前100只)，order_by=amount(按成交额排序)
+    url = "https://stock.xueqiu.com/v5/stock/screener/quote/list.json?page=1&size=100&order=desc&order_by=amount&market=CN&type=sh_sz_fund"
     
     top_funds = {}
     try:
-        res = requests.get(url, headers=headers, timeout=8).json()
-        raw_list = res.get("data", {}).get("diff", [])
+        res = session.get(url, headers=base_headers, timeout=8).json()
+        raw_list = res.get("data", {}).get("list", [])
         if not raw_list:
-            print("⚠️ 东财接口返回数据为空")
+            print("⚠️ 雪球接口返回的数据列表为空")
             return None
             
         all_data = []
         for item in raw_list:
-            code = item.get("f12")
-            name = item.get("f14")
-            amount = item.get("f6") # 成交额(元)
+            # symbol 格式如 SH513100 或 SZ161130
+            symbol = item.get("symbol", "")
+            name = item.get("name", "")
+            amount = item.get("amount", 0) # 当日实时成交额
             
-            # 过滤掉一些奇怪的无效数据或未上市品种
-            if not code or "-" in str(amount) or not name:
+            if not symbol or not name:
                 continue
                 
-            all_data.append({
-                "code": str(code),
-                "name": str(name),
-                "amount": float(amount)
-            })
+            prefix = symbol[:2].lower()   # sh 或 sz
+            code = symbol[2:]             # 6位数字代码
             
+            # 完全动态过滤：锁定LOF基金(16开头)以及名字里带有高频套利字眼的品种
+            if code.startswith("16") or any(k in name for k in ["LOF", "纳指", "标普", "油气", "原油", "黄金", "境外", "海外", "互联网", "中概"]):
+                all_data.append({
+                    "code": code,
+                    "name": name,
+                    "prefix": prefix,
+                    "amount": float(amount)
+                })
+        
         df_all = pd.DataFrame(all_data)
         if df_all.empty:
+            print("⚠️ 未能筛选出符合LOF/跨境特征的动态品种")
             return None
             
-        # 按照成交额全局倒序，切出前 50 只
+        # 按照成交额精准切出前 50 只
         df_top50 = df_all.sort_values(by="amount", ascending=False).head(50)
         
         for _, row in df_top50.iterrows():
             code = row['code']
             name = row['name']
+            prefix = row['prefix']
             
-            # 智能化判断沪深前缀：沪市上市通常5开头或50开头，深市上市1开头或15、16开头
-            prefix = "sh" if code.startswith(('5', '60', '50')) else "sz"
-            
-            # 智能化模糊匹配海外挂钩的标的期货代码
+            # 动态模糊分配海外期货联动标的
             ticker = "DOMESTIC" 
             if "纳指" in name or "纳斯达克" in name: ticker = "NQ=F"
             elif "标普500" in name or "美国50" in name: ticker = "ES=F"
             elif "道琼斯" in name: ticker = "YM=F"
-            elif "油气" in name or "华宝油气" in name: ticker = "XOP"
+            elif "油气" in name: ticker = "XOP"
             elif "石油" in name: ticker = "XLE"
             elif "原油" in name: ticker = "CL=F"
             elif "黄金" in name: ticker = "GC=F"
-            elif "商品" in name or "抗通胀" in name: ticker = "DBC"
             elif "德国" in name: ticker = "^GDAXI"
-            elif "法国" in name: ticker = "^FCHI"
             elif "印度" in name: ticker = "^BSESN"
             elif "日经" in name: ticker = "NK=F"
             elif "沙特" in name: ticker = "KSA"
-            elif "巴西" in name: ticker = "EWZ"
-            elif "互联网" in name or "中概" in name or "教育" in name: ticker = "KWEB"
-            elif "恒生" in name or "新经济" in name or "香港" in name: ticker = "^HSI"
-            elif "芯片" in name: ticker = "SOXX"
-            elif "医药" in name or "生物" in name:
-                if "海外" in name or "美国" in name or "创新药" in name: ticker = "XBI"
-            elif "东南亚" in name: ticker = "ASEA"
-            elif "亚太" in name: ticker = "AAXJ"
+            elif "互联网" in name or "中概" in name: ticker = "KWEB"
+            elif "恒生" in name or "香港" in name: ticker = "^HSI"
             
             top_funds[code] = [name, prefix, ticker, row['amount']]
             
-        print(f"✅ 成功从东财大盘筛选出成交最活跃的 {len(top_funds)} 只纯正 LOF 基金！")
+        print(f"✅ 【完全动态】成功从雪球大盘筛选出今日成交最火爆的 {len(top_funds)} 只场内基金！")
         return top_funds
     except Exception as e:
-        print(f"❌ 动态抓取东财LOF大盘成交额失败: {e}")
+        print(f"❌ 动态抓取雪球大盘数据失败: {e}")
         return None
 
 def send_notification(msg):
@@ -104,7 +100,7 @@ def send_notification(msg):
     url = "https://api2.pushdeer.com/message/push"
     payload = {
         "pushkey": PUSH_KEY,
-        "text": "🚨 全市场 Top50 活跃 LOF 溢价雷达",
+        "text": "🚨 每日全动态 Top50 LOF 溢价雷达",
         "desp": msg,
         "type": "markdown"
     }
@@ -118,9 +114,10 @@ def send_notification(msg):
         print(f"❌ 推送失败，网络异常: {e}")
 
 def get_all_iopv():
-    dynamic_map = get_top_50_all_lof()
+    # 每天完全动态获取名单
+    dynamic_map = get_top_50_dynamic_lof()
     if not dynamic_map:
-        print("⚠️ 无法获取动态排行，程序终止。")
+        print("⚠️ 动态排行获取彻底失败，程序终止。")
         return
 
     print("====== 开始获取海外市场实时动态 ======")
@@ -152,7 +149,7 @@ def get_all_iopv():
     for fund_code, info in dynamic_map.items():
         fund_name, prefix, ticker_code, amount = info
         
-        # A. 获取 A 股场内现价 (新浪接口)
+        # A. 获取 A 股场内现价 (新浪基础价格接口，通常不封IP)
         sina_url = f"https://hq.sinajs.cn/list={prefix}{fund_code}"
         try:
             res = requests.get(sina_url, headers={"Referer": "https://finance.sina.com.cn"}, timeout=5)
@@ -209,7 +206,7 @@ def get_all_iopv():
                 if limit_info:
                     status_str = f"⚠️ 限购 {limit_info.group(1)}"
                 elif "限购" in html_content:
-                    detail_limit = re.search(r'单日限额([^<、\s]+)', html_content)
+                    detail_limit = re.search(r'单日限额([^< canvas\s]+)', html_content)
                     if detail_limit: status_str = f"⚠️ 限购 {detail_limit.group(1)}"
         except:
             status_str = "✅ 自由申购(估)"
@@ -225,18 +222,15 @@ def get_all_iopv():
             "raw_premium": premium_rate
         })
 
-    # 输出全市场大盘看板
-    df = pd.DataFrame(results)
-    df = df.sort_values(by="raw_premium", ascending=False) 
+    df = pd.DataFrame(results).sort_values(by="raw_premium", ascending=False) 
     
-    print("🔥 ====== 全市场流动性最强 Top 50 LOF/场内基金套利监控大盘 ======")
+    print("🔥 ====== 全市场动态Top 50 LOF/场内基金套利监控大盘 ======")
     print(df[["代码", "名称", "现价", "估算IOPV", "实时溢价率", "今日成交额", "申购状态"]].to_string(index=False))
     print("====================================================================\n")
 
-    # 5. 过滤出：【有套利价值 > 3%】且【没有暂停申购】的基金进行推送通知
     alert_funds = df[(df['raw_premium'] > 0.03) & (df['申购状态'] != "❌ 暂停申购")]
     if not alert_funds.empty:
-        msg_markdown = "### 🚨 发现全市场高成交量LOF/ETF套利机会！\n"
+        msg_markdown = "### 🚨 发现全动态高成交量LOF/ETF套利机会！\n"
         for _, row in alert_funds.iterrows():
             msg_markdown += f"- **{row['名称']} ({row['代码']})**\n"
             msg_markdown += f"  - 实时溢价率：`{row['实时溢价率']}` (成交额:{row['今日成交额']})\n"
