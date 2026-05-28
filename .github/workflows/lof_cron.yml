@@ -25,6 +25,10 @@ jobs:
       run: |
         pip install yfinance pandas requests
 
+    - name: Install dependencies
+      run: |
+        pip install requests pandas yfinance akshare
+
     - name: Run Monitor Script
       env:
         PUSH_KEY: ${{ secrets.PUSH_KEY }}  # ← 添加这行
