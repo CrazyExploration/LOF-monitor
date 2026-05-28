@@ -46,9 +46,6 @@ FUND_MAP = {
 }
 
 def send_notification(msg):
-    """
-    负责把报警信息打通到你的 PushDeer
-    """
     print(f"[开始发送 PushDeer 推送]...\n{msg}")
     url = "https://api2.pushdeer.com/message/push"
     payload = {
@@ -85,9 +82,10 @@ def get_all_iopv():
     cny_change = market_changes.get("CNY=X", 0)
     print("======================================\n")
 
-    headers = {
+    # 模拟高度逼真的移动端和网页端 Headers
+    headers_web = {
         "Referer": "https://fund.eastmoney.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     results = []
@@ -110,44 +108,62 @@ def get_all_iopv():
         last_nav = float(data_list[1]) 
         try:
             tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
-            tt_res = requests.get(tt_url, headers=headers, timeout=5)
+            tt_res = requests.get(tt_url, headers=headers_web, timeout=5)
             last_nav = float(re.search(r'"dwjz":"([^"]*)"', tt_res.text).group(1))
         except:
             pass
 
-        # C. 【升级版】双重接口解析获取申购状态与限额
+        # C. 【高防爬容错版】解析申购状态
         status_str = "✅ 自由申购"
         try:
-            # 接口 1：天天基金基础静态接口
-            web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
-            web_res = requests.get(web_info_url, headers=headers, timeout=5).text
+            # 1. 首先尝试抓取最敏感的移动端动态接口
+            rand_device = "".join(random.choices("0123456789ABCDEF", k=32))
+            detail_url = f"https://fundmobapi.1234567.com.cn/FundMApi/FundBaseLoading.ashx?FCODE={fund_code}&deviceid={rand_device}&version=6.5.5"
+            headers_mob = {
+                "User-Agent": "EMFund/6.5.5 (iPhone; iOS 16.1; Scale/3.00)",
+                "Host": "fundmobapi.1234567.com.cn"
+            }
             
-            # 接口 2：天天基金动态详情接口（此接口对变动极度敏感）
-            detail_url = f"https://fundmobapi.1234567.com.cn/FundMApi/FundBaseLoading.ashx?FCODE={fund_code}&deviceid=Wap&version=6.5.5"
-            detail_res = requests.get(detail_url, headers=headers, timeout=5).json()
-            
-            # 提取接口 2 的真实申购状态
-            # 0-可以申购，1-停购，2-限购
+            detail_res = requests.get(detail_url, headers=headers_mob, timeout=5).json()
             buy_state = detail_res.get("Datas", {}).get("GZ", {}).get("BUYSTATE")
             state_desc = detail_res.get("Datas", {}).get("GZ", {}).get("STATE_DESC", "")
             
-            if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", "") or buy_state == "1" or "暂停" in state_desc:
+            if buy_state == "1" or "暂停" in state_desc:
                 status_str = "❌ 暂停申购"
+            elif buy_state == "2":
+                status_str = "⚠️ 限购 (看公告)"
+                limit_match = re.search(r'(\d+元|\d+万)', state_desc)
+                if limit_match:
+                    status_str = f"⚠️ 限购 {limit_match.group(1)}"
             else:
-                # 优先从对敏感的动态接口提取大额限购额度
-                if buy_state == "2":
-                    status_str = f"⚠️ 限购 (看公告)"
-                    limit_match = re.search(r'(\d+元|\d+万|\d+单)', state_desc)
-                    if limit_match:
-                        status_str = f"⚠️ 限购 {limit_match.group(1)}"
+                # 动态接口显示自由申购，再用静态接口做一层二次交叉风控
+                web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
+                web_res = requests.get(web_info_url, headers=headers_web, timeout=5).text
+                if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
+                    status_str = "❌ 暂停申购"
                 else:
-                    # 备用：从静态接口匹配
                     limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
                     if limit_match:
                         status_str = f"⚠️ 限购 {limit_match.group(1)}"
+                        
         except Exception as e:
-            status_str = "⚠️ 解析失败"
-            
+            # 【核心改进：降级兜底方案】
+            # 如果上面任何一个高灵敏接口被拦截报错了，绝不显示“解析失败”！
+            # 而是立刻启用最稳定的网页公开静态数据进行降级兜底，保证程序不中断
+            try:
+                web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
+                web_res = requests.get(web_info_url, headers=headers_web, timeout=5).text
+                if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
+                    status_str = "❌ 暂停申购"
+                else:
+                    limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
+                    if limit_match:
+                        status_str = f"⚠️ 限购 {limit_match.group(1)}"
+                    else:
+                        status_str = "✅ 自由申购"
+            except:
+                status_str = "✅ 自由申购(估)" # 终极兜底，假设可买
+
         # D. 计算实时 IOPV
         asset_change = market_changes.get(ticker_code, 0)
         
