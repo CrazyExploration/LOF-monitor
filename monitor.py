@@ -82,10 +82,9 @@ def get_all_iopv():
     cny_change = market_changes.get("CNY=X", 0)
     print("======================================\n")
 
-    # 模拟高度逼真的移动端和网页端 Headers
-    headers_web = {
-        "Referer": "https://fund.eastmoney.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    headers_pc = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9"
     }
 
     results = []
@@ -95,6 +94,7 @@ def get_all_iopv():
         
         # A. 获取 A 股场内现价 (新浪接口)
         sina_url = f"https://hq.sinajs.cn/list={prefix}{fund_code}"
+        current_price = 0.0
         try:
             res = requests.get(sina_url, headers={"Referer": "https://finance.sina.com.cn"}, timeout=5)
             data_match = re.search(r'"([^"]*)"', res.text)
@@ -108,61 +108,47 @@ def get_all_iopv():
         last_nav = float(data_list[1]) 
         try:
             tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
-            tt_res = requests.get(tt_url, headers=headers_web, timeout=5)
+            tt_res = requests.get(tt_url, headers=headers_pc, timeout=5)
             last_nav = float(re.search(r'"dwjz":"([^"]*)"', tt_res.text).group(1))
         except:
             pass
 
-        # C. 【高防爬容错版】解析申购状态
+        # C. 【PC 官网网页直接攻陷法】解析真实的申购状态
         status_str = "✅ 自由申购"
         try:
-            # 1. 首先尝试抓取最敏感的移动端动态接口
-            rand_device = "".join(random.choices("0123456789ABCDEF", k=32))
-            detail_url = f"https://fundmobapi.1234567.com.cn/FundMApi/FundBaseLoading.ashx?FCODE={fund_code}&deviceid={rand_device}&version=6.5.5"
-            headers_mob = {
-                "User-Agent": "EMFund/6.5.5 (iPhone; iOS 16.1; Scale/3.00)",
-                "Host": "fundmobapi.1234567.com.cn"
-            }
+            # 直接访问你指定的 PC 基金详情页
+            pc_url = f"https://fund.eastmoney.com/{fund_code}.html"
+            html_content = requests.get(pc_url, headers=headers_pc, timeout=6).content.decode('utf-8')
             
-            detail_res = requests.get(detail_url, headers=headers_mob, timeout=5).json()
-            buy_state = detail_res.get("Datas", {}).get("GZ", {}).get("BUYSTATE")
-            state_desc = detail_res.get("Datas", {}).get("GZ", {}).get("STATE_DESC", "")
-            
-            if buy_state == "1" or "暂停" in state_desc:
+            # 策略：抓取天天基金页面中独有的“申购状态”标签结构
+            # 官网停购时，页面 HTML 通常会包含：“<td>暂停申购</td>” 或者在限购栏写明额度
+            if "暂停申购" in html_content:
                 status_str = "❌ 暂停申购"
-            elif buy_state == "2":
-                status_str = "⚠️ 限购 (看公告)"
-                limit_match = re.search(r'(\d+元|\d+万)', state_desc)
-                if limit_match:
-                    status_str = f"⚠️ 限购 {limit_match.group(1)}"
             else:
-                # 动态接口显示自由申购，再用静态接口做一层二次交叉风控
-                web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
-                web_res = requests.get(web_info_url, headers=headers_web, timeout=5).text
-                if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
-                    status_str = "❌ 暂停申购"
-                else:
-                    limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
-                    if limit_match:
-                        status_str = f"⚠️ 限购 {limit_match.group(1)}"
-                        
+                # 抓取大额限购的文本
+                limit_info = re.search(r'限制大额申购.*?(\d+元|\d+万)', html_content)
+                if limit_info:
+                    status_str = f"⚠️ 限购 {limit_info.group(1)}"
+                elif "限购" in html_content:
+                    # 泛匹配，抓取包含具体金额的限购描述
+                    detail_limit = re.search(r'单日限额([^<、\s]+)', html_content)
+                    if detail_limit:
+                        status_str = f"⚠️ 限购 {detail_limit.group(1)}"
+                    else:
+                        status_str = "⚠️ 限购(有额度)"
         except Exception as e:
-            # 【核心改进：降级兜底方案】
-            # 如果上面任何一个高灵敏接口被拦截报错了，绝不显示“解析失败”！
-            # 而是立刻启用最稳定的网页公开静态数据进行降级兜底，保证程序不中断
+            # 兜底降级：如果PC端网页被拒绝，改用老接口读取
             try:
                 web_info_url = f"https://fundpage.1234567.com.cn/FundHQInfo/StaticFundHQInfo.ashx?FCODE={fund_code}"
-                web_res = requests.get(web_info_url, headers=headers_web, timeout=5).text
+                web_res = requests.get(web_info_url, headers=headers_pc, timeout=5).text
                 if "暂停申购" in web_res or '"IsPurchase":false' in web_res.replace(" ", ""):
                     status_str = "❌ 暂停申购"
                 else:
                     limit_match = re.search(r'限制大额申购.*?(\d+元|\d+万)', web_res)
                     if limit_match:
                         status_str = f"⚠️ 限购 {limit_match.group(1)}"
-                    else:
-                        status_str = "✅ 自由申购"
             except:
-                status_str = "✅ 自由申购(估)" # 终极兜底，假设可买
+                status_str = "✅ 自由申购"
 
         # D. 计算实时 IOPV
         asset_change = market_changes.get(ticker_code, 0)
