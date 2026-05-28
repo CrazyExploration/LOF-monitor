@@ -2,57 +2,60 @@ import yfinance as yf
 import pandas as pd
 import requests
 import re
-import os
+import json
+from io import StringIO
 
 # 1. 从环境变量读取 PushDeer PUSH_KEY
 PUSH_KEY = os.getenv("PUSH_KEY")
 
 def get_top_50_all_lof():
     """
-    动态获取今天A股全市场（不限跨境）成交额最大的50只LOF/场内基金
+    通过天天基金全量场内即时接口，动态获取今天全市场成交额最大的50只LOF/场内基金
     """
     print("🔄 正在动态获取全市场成交额 Top 50 的场内 LOF/活跃基金...")
-    headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+    
+    # 采用天天基金官方全量场内基金排行榜接口，数据极度稳定，标准JSON，且包含了完整的成交额数据
+    url = "https://fundapi.eastmoney.com/fundmarkethand/common/GetFundMarketList?sType=全部场内基金&pageIndex=1&pageSize=200&sortColumn=VOLUME&sortOrder=desc&_v="
+    headers = {
+        "Referer": "https://fund.eastmoney.com/cnjy_list.html",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     
     top_funds = {}
     try:
-        # 抓取沪深两市全量场内基金（涵盖所有LOF和ETF）
-        url_sz = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=1&num=150&sort=amount&asc=0&node=etf_sz"
-        url_sh = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=1&num=150&sort=amount&asc=0&node=etf_sh"
-        
-        all_data = []
-        for url in [url_sz, url_sh]:
-            res = requests.get(url, headers=headers, timeout=5).text
-            cleaned_data = re.sub(r'([a-zA-Z0-9_]+):', r'"\1":', res)
-            try:
-                all_data.extend(pd.read_json(cleaned_data).to_dict(orient="records"))
-            except:
-                pass
-        
-        df_all = pd.DataFrame(all_data)
-        if df_all.empty:
+        res = requests.get(url, headers=headers, timeout=8).json()
+        raw_list = res.get("data", [])
+        if not raw_list:
+            print("⚠️ 接口返回的基金列表为空")
             return None
             
-        df_all['amount'] = pd.to_numeric(df_all['amount'], errors='coerce').fillna(0)
+        all_data = []
+        for item in raw_list:
+            # 字段映射：JJDM(基金代码), JJJC(基金简称), CJJE(成交额)
+            all_data.append({
+                "code": item.get("JJDM"),
+                "name": item.get("JJJC"),
+                "amount": float(item.get("CJJE", 0)) if item.get("CJJE") else 0.0
+            })
+            
+        df_all = pd.DataFrame(all_data)
         
-        # 【核心改动】放宽过滤条件：
-        # 1. 代码以16开头的必然是LOF
-        # 2. 或者名字中包含"LOF"字样
-        # 3. 或者属于传统的跨境/黄金/原油等套利高发品种
-        is_lof = df_all['code'].str.contains(r'(sz16|sh16)', regex=True)
-        has_lof_tag = df_all['name'].str.contains(r'LOF|纳指|标普|油气|原油|黄金|德国|法国|日经|沙特|印度', na=False, regex=True)
+        # 智能化过滤出属于 LOF 或高发套利品种（跨境、大宗等）的场内品种
+        # 天天基金榜单包含普通LOF、跨境LOF和各类行业ETF
+        keyword_filter = "LOF|纳指|纳斯达克|标普|油气|原油|黄金|石油|商品|德国|法国|日经|印|沙特|巴西|亚洲|港|恒生|互联网|中概|教育|海外|芯片|白酒|消费|医药|医疗|中药|新能源|有色|煤炭|资源|券商|红利"
+        df_filtered = df_all[df_all['name'].str.contains(keyword_filter, na=False, regex=True)].copy()
         
-        df_filtered = df_all[is_lof | has_lof_tag]
-        
-        # 筛选出成交额全局排名前 50 的品种
+        # 按照成交额全局倒序，切出前 50 只
         df_top50 = df_filtered.sort_values(by="amount", ascending=False).head(50)
         
         for _, row in df_top50.iterrows():
-            code = str(row['code'])[2:] # 去除sh/sz前缀
-            prefix = str(row['code'])[:2]
+            code = str(row['code'])
             name = row['name']
             
-            # 判断是否为跨境品种（如果是跨境，需要联动海外期指；如果不是，则标记为"DOMESTIC"走国内实时估值接口）
+            # 判断沪深前缀：沪市上市通常5开头或50开头，深市上市1开头或15开头
+            prefix = "sh" if code.startswith(('5', '60', '50')) else "sz"
+            
+            # 智能化模糊匹配海外挂钩的标的期货代码
             ticker = "DOMESTIC" 
             if "纳指" in name or "纳斯达克" in name: ticker = "NQ=F"
             elif "标普500" in name or "美国50" in name: ticker = "ES=F"
@@ -76,9 +79,10 @@ def get_top_50_all_lof():
             elif "东南亚" in name: ticker = "ASEA"
             elif "亚太" in name: ticker = "AAXJ"
             
+            # 天天基金接口返回的成交额单位本来就是“元”
             top_funds[code] = [name, prefix, ticker, row['amount']]
             
-        print(f"✅ 成功动态筛选出全市场成交最活跃的 {len(top_funds)} 只 LOF/套利基金目标！")
+        print(f"✅ 成功动态筛选出全市场成交最活跃的 {len(top_funds)} 只 LOF/场内基金目标！")
         return top_funds
     except Exception as e:
         print(f"❌ 动态抓取全市场Top 50成交额失败: {e}")
@@ -109,7 +113,6 @@ def get_all_iopv():
         return
 
     print("====== 开始获取海外市场实时动态 ======")
-    # 提取所有需要用到的海外期货代码（排除国内品种的DOMESTIC标记）
     global_tickers = list(set([info[2] for info in dynamic_map.values() if info[2] != "DOMESTIC"]))
     global_tickers.append("CNY=X") 
     
@@ -149,25 +152,20 @@ def get_all_iopv():
         except:
             continue
 
-        # B. 核心改进：双轨制计算实时 IOPV (估算净值)
+        # B. 双轨制计算实时 IOPV
         estimated_iopv = 0.0
-        
         if ticker_code == "DOMESTIC":
-            # 【国内品种轨道】：直接抓取新浪/天天基金网页端盘中每10秒更新一次的精准实时估算净值(gsz)
             try:
                 tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
                 tt_res = requests.get(tt_url, headers=headers_pc, timeout=4)
-                # 提取 gsz (估算净值)
                 gsz_match = re.search(r'"gsz":"([^"]*)"', tt_res.text)
                 if gsz_match:
                     estimated_iopv = float(gsz_match.group(1))
                 else:
-                    # 抓不到估算则用昨末净值代替
                     estimated_iopv = float(re.search(r'"dwjz":"([^"]*)"', tt_res.text).group(1))
             except:
                 estimated_iopv = float(data_list[1]) if float(data_list[1]) > 0 else current_price
         else:
-            # 【跨境品种轨道】：由于时差，必须采用 昨末净值 + 海外期指实时变动 联动计算法
             last_nav = float(data_list[1])
             try:
                 tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
@@ -188,7 +186,7 @@ def get_all_iopv():
         else:
             premium_rate = 0.0
 
-        # D. 精准解析申购状态（攻陷PC官网页）
+        # D. 精准解析申购状态
         status_str = "✅ 自由申购"
         try:
             pc_url = f"https://fund.eastmoney.com/{fund_code}.html"
