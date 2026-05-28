@@ -11,14 +11,13 @@ PUSH_KEY = os.getenv("PUSH_KEY")
 def get_top_50_dynamic_lof():
     """
     全盘海外化：动态生成 A 股全市场 LOF 核心号段代码池，
-    利用 yfinance 批量拉取盘中实时成交量，在内存中动态排序，拒绝任何硬编码写死！
+    利用 yfinance.history 批量拉取精准收盘价与成交量，彻底杜绝字段错位引起的万倍溢价。
     """
-    print("🔄 正在通过 yfinance 广度扫描全市场 LOF 号段 (16xxxx) 并动态计算成交额排行...")
+    print("🔄 正在通过 yfinance.history 广度扫描全市场 LOF 号段 (16xxxx) 的精准行情...")
     
-    # 动态生成深市纯正 LOF 基金最核心的 220 个连续代码号段
-    # 几乎所有主流的跨境、白酒、中药、大宗商品 LOF 全部包含在此范围内
+    # 动态生成深市纯正 LOF 基金最核心的号段
     lof_codes = [f"16{str(i).zfill(4)}.SZ" for i in range(1, 160)] 
-    # 补充添加沪深两市最顶流、最容易发生套利的超活跃跨境/大宗场内基金代码
+    # 补充添加沪深两市超活跃跨境/大宗场内基金代码
     extra_hot = [
         "513100.SS", "159509.SZ", "513300.SS", "513500.SS", "513400.SS", 
         "513050.SS", "513030.SS", "513880.SS", "520830.SS", "159329.SZ", "513730.SS"
@@ -28,38 +27,47 @@ def get_top_50_dynamic_lof():
     print(f"📊 动态构建完成的扫描池共包含 {len(scan_pool)} 只场内基金候选品种。")
 
     try:
-        # 雅虎财经在海外服务器上 100% 敞开跑，绝对不封锁
-        tickers_data = yf.Tickers(' '.join(scan_pool))
+        # 使用 Tickers 下载快照
+        tickers_obj = yf.Tickers(' '.join(scan_pool))
+        # 一口气下载所有代码今日的1天K线数据（获取最纯正的价格和成交量）
+        history_df = yf.download(scan_pool, period="1d", group_by='ticker', progress=False)
     except Exception as e:
-        print(f"❌ 雅虎财经号段批量扫描失败: {e}")
+        print(f"❌ 雅虎财经号段批量下载失败: {e}")
         return None
 
     valid_funds = []
     for ticker_code in scan_pool:
         try:
-            info = tickers_data.tickers[ticker_code].info
-            current_price = info.get("regularMarketPrice")
-            volume = info.get("regularMarketVolume")
-            
-            # 只有今天真正有成交量、有行情的基金才会被捕获
-            if current_price and volume and float(volume) > 0:
-                amount = float(current_price) * float(volume) # 内存中动态计算今日成交额
+            # 从 history 中提取最纯正的现价和成交量，拒绝 info 字段的错位干扰
+            if ticker_code in history_df.columns.levels[0]:
+                ticker_data = history_df[ticker_code]
+                if ticker_data.empty: continue
                 
-                # 剔除雅虎接口偶尔返回的异常个股数据，确保是基金
-                fund_name = info.get("shortName", "场内基金")
+                current_price = float(ticker_data['Close'].iloc[-1])
+                volume = float(ticker_data['Volume'].iloc[-1])
                 
-                valid_funds.append({
-                    "ticker": ticker_code,
-                    "code": ticker_code.split('.')[0],
-                    "name": fund_name,
-                    "price": float(current_price),
-                    "amount": amount
-                })
-        except:
+                # 剔除现价明显异常、无成交量，或者价格被严重放大扭曲的脏数据
+                if current_price > 0 and volume > 0 and current_price < 500:
+                    amount = current_price * volume # 内存中动态计算今日真实成交额
+                    
+                    # 尝试从 info 拿名字，拿不到就用代码代替
+                    try:
+                        fund_name = tickers_obj.tickers[ticker_code].info.get("shortName", "场内基金")
+                    except:
+                        fund_name = "场内基金"
+                        
+                    valid_funds.append({
+                        "ticker": ticker_code,
+                        "code": ticker_code.split('.')[0],
+                        "name": fund_name,
+                        "price": current_price,
+                        "amount": amount
+                    })
+        except Exception as e:
             continue
 
     if not valid_funds:
-        print("⚠️ 扫描池内所有品种今日成交量皆为0或雅虎接口未响应")
+        print("⚠️ 扫描池内所有品种今日成交量皆为0或雅虎历史接口未响应")
         return None
 
     # 将结果转化为 DataFrame，完全根据当天的成交额进行【动态倒序洗牌】
@@ -69,13 +77,11 @@ def get_top_50_dynamic_lof():
     top_funds = {}
     for _, row in df_top50.iterrows():
         code = row['code']
-        # 为了展示美观，我们根据代码动态去天天基金或者用雅虎默认名
         name = row['name']
         prefix = "sh" if row['ticker'].endswith("SS") else "sz"
         
-        # 动态模糊分配海外期货联动标的（基于雅虎返回或后续补充）
-        ticker = "DOMESTIC"
         # 智能化匹配海外资产代码
+        ticker = "DOMESTIC"
         if "纳指" in name or "NASDAQ" in name or code in ["513100", "159509", "513300", "161130"]: ticker = "NQ=F"
         elif "标普" in name or "S&P" in name or code in ["513500", "161125"]: ticker = "ES=F"
         elif "华宝油气" in name or code == "162411": ticker = "XOP"
@@ -88,9 +94,9 @@ def get_top_50_dynamic_lof():
         elif "中概" in name or "互联网" in name or code in ["160644", "513050", "164906"]: ticker = "KWEB"
         elif "恒生" in name or "香港" in name or code in ["161726", "160125"]: ticker = "^HSI"
         
-        top_funds[code] = [name, prefix, ticker, row['amount']]
+        top_funds[code] = [name, prefix, ticker, row['price'], row['amount']]
         
-    print(f"✅ 【完全动态】成功在内存中算出了今日流动性最强的 {len(top_funds)} 只场内基金！")
+    print(f"✅ 【完全动态】成功通过历史快照计算出今日流动性最强的 {len(top_funds)} 只场内基金！")
     return top_funds
 
 def send_notification(msg):
@@ -98,7 +104,7 @@ def send_notification(msg):
     url = "https://api2.pushdeer.com/message/push"
     payload = {
         "pushkey": PUSH_KEY,
-        "text": "🚨 100%海外穿透型全动态 LOF 溢价雷达",
+        "text": "🚨 100%海外穿透型精准动态 LOF 溢价雷达",
         "desp": msg,
         "type": "markdown"
     }
@@ -144,10 +150,9 @@ def get_all_iopv():
     results = []
 
     for fund_code, info in dynamic_map.items():
-        fund_name, prefix, ticker_code, amount = info
-        current_price = info[3] # 从大盘直接带出雅虎现价
+        fund_name, prefix, ticker_code, current_price, amount = info
         
-        # 优化：通过单只请求天天基金获取官方准确基金名称（单代码高频接口，通常不封IP）
+        # 动态去天天基金抓取官方准确中文名称（单代码高频接口，通常不封IP）
         try:
             tt_url = f"https://fundgz.1234567.com.cn/js/{fund_code}.js"
             tt_res = requests.get(tt_url, headers=headers_pc, timeout=3)
@@ -185,7 +190,7 @@ def get_all_iopv():
             else:
                 estimated_iopv = last_nav * (1 + asset_change) * (1 + cny_change)
 
-        # 计算实时溢价率
+        # 计算真实实时溢价率
         premium_rate = (current_price / estimated_iopv) - 1 if estimated_iopv > 0 else 0.0
 
         # 精准解析申购状态
@@ -205,7 +210,7 @@ def get_all_iopv():
         results.append({
             "代码": fund_code,
             "名称": fund_name,
-            "现价": current_price,
+            "现价": round(current_price, 4),
             "估算IOPV": round(estimated_iopv, 4),
             "实时溢价率": f"{premium_rate:.2%}",
             "今日成交额": f"{amount/10000:.1f}万",
@@ -216,7 +221,7 @@ def get_all_iopv():
     df = pd.DataFrame(results)
     df = df.sort_values(by="raw_premium", ascending=False) 
     
-    print("🔥 ====== yfinance完美穿透·全动态监控大盘 ======")
+    print("🔥 ====== yfinance历史快照穿透·全动态监控大盘 ======")
     print(df[["代码", "名称", "现价", "估算IOPV", "实时溢价率", "今日成交额", "申购状态"]].to_string(index=False))
     print("====================================================================\n")
 
