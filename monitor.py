@@ -9,28 +9,6 @@ import os
 # 1. 从环境变量读取 PushDeer PUSH_KEY
 PUSH_KEY = os.getenv("PUSH_KEY")
 
-这个思路非常切中要害！你提到的 quote.eastmoney.com/center/gridlist.html#fund_lof 正是东方财富网最核心的 LOF 基金全量大盘看板。你在网页上看到的那个表格，底层其实是由一个非常强大的动态数据接口（Data Center API）在源源不断地提供数据。
-
-既然天天基金的通用场内接口对 GitHub Actions 的海外服务器有频次或区域限制，我们直接去抓东方财富网行情中心的底层核心接口（push2.eastmoney.com）。
-
-这个接口有两个压倒性的优势：
-
-反爬极其温和：因为它是为了支撑东方财富 PC 网页端海量用户刷新行情设计的，对海外 IP 和自动化脚本非常友好。
-
-数据极其纯正：它返回的是100% 纯正的场内 LOF 基金，不需要我们再用复杂的正则表达式去费力筛选，而且成交额、涨跌幅、现价全是一手数据。
-
-请用下面这段全面换装“东财行情中心独立引擎”的全新代码，彻底覆盖你的 monitor.py：
-
-Python
-import yfinance as yf
-import pandas as pd
-import requests
-import re
-import json
-
-# 1. 你的 PushDeer PUSH_KEY
-PUSH_KEY = "PDU41670T22D55V5R9teoDdNT1StkmMppq8351Evg"
-
 def get_top_50_all_lof():
     """
     直接攻陷东方财富行情中心LOF板块底层接口，动态获取今日成交额最大的50只LOF
