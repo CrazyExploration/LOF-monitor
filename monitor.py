@@ -181,7 +181,7 @@ def get_all_iopv():
     print("========================================================\n")
 
     # 5. 过滤出：【有套利价值 > 3%】且【没有暂停申购】的基金进行通知
-    alert_funds = df[(df['raw_premium'] > 0) & (df['申购状态'] != "❌ 暂停申购")]
+    alert_funds = df[(df['raw_premium'] > 0.03) & (df['申购状态'] != "❌ 暂停申购")]
     if not alert_funds.empty:
         msg_markdown = "### 🚨 发现可套利高溢价LOF/ETF！\n"
         for _, row in alert_funds.iterrows():
