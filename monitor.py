@@ -4,6 +4,7 @@ import requests
 import re
 import json
 from io import StringIO
+import os
 
 # 1. 从环境变量读取 PushDeer PUSH_KEY
 PUSH_KEY = os.getenv("PUSH_KEY")
