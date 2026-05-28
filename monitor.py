@@ -4,7 +4,7 @@ import requests
 import re
 
 # 1. 你的 PushDeer PUSH_KEY
-PUSH_KEY = "PDU41670T22D55V5R9teoDdNT1StkmMppq8351Evg"
+os.getenv("PUSH_KEY")
 
 # 2. 全量跨境 ETF / LOF 资产映射表
 FUND_MAP = {
