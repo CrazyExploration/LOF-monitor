@@ -9,6 +9,11 @@ on:
     - cron: '30 5 * * 1-5'  # 北京时间 13:30
     - cron: '30 6 * * 1-5'  # 北京时间 14:30
 
+  push:
+    branches:
+      - main
+      - test
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
